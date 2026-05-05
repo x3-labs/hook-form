@@ -47,12 +47,15 @@
     });
   }
 
-  // Получить URL страницы без UTM параметров и фрагмента
+  // Получить URL страницы без UTM параметров, Click ID и фрагмента
   function getCleanPageUrl() {
     const url = new URL(window.location);
-    const utmKeys = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'gclid', 'fbclid', 'ttclid'];
+    const trackingParams = [
+      'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term',
+      'gclid', 'fbclid', 'ttclid'
+    ];
 
-    utmKeys.forEach(key => {
+    trackingParams.forEach(key => {
       url.searchParams.delete(key);
     });
 
@@ -97,8 +100,9 @@
     return data;
   }
 
-  // Отправить данные на webhook с таймаутом
-  function sendToWebhook(form, data) {
+  // Обёртка для отправки с гарантированным сбросом флага
+  function sendWithStateReset(form, data) {
+    // Вставляем сброс флага в оригинальную функцию через Promise
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), config.timeout);
 
@@ -106,21 +110,16 @@
       method: 'POST',
       body: JSON.stringify(data),
       mode: 'no-cors',
-      headers: {
-        'Content-Type': 'application/json'
-      },
       signal: controller.signal
     })
       .then(() => {
         clearTimeout(timeoutId);
-        // В режиме no-cors мы не получаем статус ответа, но это означает,
-        // что сетевой запрос успешно завершился. Webhook обработает данные.
         form.dispatchEvent(new CustomEvent('hookform:success'));
+        return true;
       })
       .catch(error => {
         clearTimeout(timeoutId);
 
-        // Определить тип ошибки для логирования
         let errorMessage = 'Неизвестная ошибка';
         if (error.name === 'AbortError') {
           errorMessage = `Timeout после ${config.timeout}ms`;
@@ -134,6 +133,7 @@
         form.dispatchEvent(new CustomEvent('hookform:error', {
           detail: { error: errorMessage }
         }));
+        return false;
       });
   }
 
@@ -161,13 +161,24 @@
 
       // Отправить данные
       const data = collectFormData(form);
-      sendToWebhook(form, data);
+      sendWithStateReset(form, data)
+        .finally(() => {
+          // Сброс флага гарантирует, что кнопка разблокируется
+          // только после завершения fetch (успех или ошибка)
+          isSubmitting = false;
+        });
+    });
+  }
 
-      // Сбросить флаг после завершения (успех или ошибка)
-      // Даём время webhook'у ответить, затем разблокируем
-      setTimeout(() => {
-        isSubmitting = false;
-      }, 1000);
+  // Функция для подключения обработчиков к формам
+  function attachFormHandlers() {
+    const forms = document.querySelectorAll('form');
+    if (forms.length === 0) {
+      console.warn('HookForm: на странице не найдено ни одной <form>');
+    }
+
+    forms.forEach(form => {
+      setupForm(form);
     });
   }
 
@@ -196,15 +207,13 @@
       // Прочитать UTM параметры из URL и сохранить в куки
       captureUtmParams();
 
-      // Найти все формы и навесить на них обработчики
-      const forms = document.querySelectorAll('form');
-      if (forms.length === 0) {
-        console.warn('HookForm: на странице не найдено ни одной <form>');
+      // Подключить обработчики к формам
+      // Если DOM уже загружен, подключаем сразу. Иначе ждём DOMContentLoaded.
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', attachFormHandlers);
+      } else {
+        attachFormHandlers();
       }
-
-      forms.forEach(form => {
-        setupForm(form);
-      });
 
       return true;
     }

@@ -35,6 +35,39 @@
     }
   }
 
+  // Получить Google Analytics Client ID
+  // Сначала пытаемся получить через gtag API, затем из куки
+  function getGAClientId() {
+    // Попробуем получить через Google Analytics API если доступна
+    if (typeof window.gtag === 'function') {
+      try {
+        let clientId = '';
+        window.gtag('get', 'client_id', (id) => {
+          clientId = id;
+        });
+        if (clientId) return clientId;
+      } catch (e) {
+        // Если API недоступна, продолжаем к чтению куки
+      }
+    }
+
+    // Получаем из куки Google Analytics 4 (_ga)
+    const ga4Match = document.cookie.match(/_ga=GA[\d.]+\.([\d.]+)/);
+    if (ga4Match && ga4Match[1]) {
+      return ga4Match[1];
+    }
+
+    // Резервный вариант - ищем в куки _ga целиком
+    const gaCookie = document.cookie
+      .split('; ')
+      .find(row => row.startsWith('_ga='));
+    if (gaCookie) {
+      return gaCookie.substring(4); // Удаляем "_ga="
+    }
+
+    return '';
+  }
+
   // Прочитать и сохранить UTM параметры из URL при загрузке страницы
   function captureUtmParams() {
     const params = new URLSearchParams(window.location.search);
@@ -96,6 +129,9 @@
     // Добавить Facebook параметры из браузерных куки
     data.fbp = cookies.get('_fbp');
     data.fbc = cookies.get('_fbc');
+
+    // Добавить Google Analytics Client ID
+    data.ga_client_id = getGAClientId();
 
     return data;
   }
